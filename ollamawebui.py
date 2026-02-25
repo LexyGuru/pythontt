@@ -12,6 +12,13 @@ Alapértelmezett címek:
   - Ollama API:    http://10.0.0.78:11434
   - Jupyter:       http://10.0.0.80:8888
   - Open WebUI:   saját gép, API kulcs opcionális
+
+Ha a "Folyamat szelepek" nem jelenik meg / nem tudod kiválasztani az Open WebUI-ban:
+  - Admin Panel > Beállítások > Connections: add hozzá a Pipeline kapcsolatot
+    (API URL: http://10.0.0.175:9099  – a /v1 NINCS az URL-ben itt; API key: 0p3n-w3bu! vagy üres)
+  - Admin Panel > Beállítások > Pipelines fül: itt jelennek meg a pipeline-ok, szelepek (valve)
+  - A csevegésnél a modellválasztóban az "External" / pipeline modellek itt jelennek meg
+  - Ha továbbra sem látszik: használd Pythonból pipeline_list_models() és pipeline_chat() (lásd lent).
 """
 
 import os
@@ -325,9 +332,33 @@ def ddgs_search(query: str, max_results: int = 5):
     ]
 
 
+# --- Folyamat (Pipeline) modellek – ha a felületen nem jelenik meg a szelep ---
+
+def list_pipeline_models(base_url: str | None = None, api_key: str | None = None):
+    """
+    Pipeline API-ból listázza a modelleket. Ha az Open WebUI-ban nem jelenik meg
+    a folyamat szelep / modellválasztó, ezzel megnézheted, milyen modellek
+    érhetők el, és pipeline_chat(model, ...) ezekkel a nevekkel hívható.
+    """
+    try:
+        raw = pipeline_list_models(base_url=base_url, api_key=api_key)
+        if isinstance(raw, list):
+            return [m.get("id", m.get("name", str(m))) if isinstance(m, dict) else str(m) for m in raw]
+        return raw
+    except Exception:
+        return []
+
+
 # --- Példa használat ---
 
 if __name__ == "__main__":
+    # 0) Folyamat szelepek: Pipeline modellek (ha a felületen nem jelenik meg / nem tudod kiválasztani)
+    try:
+        pl_models = list_pipeline_models()
+        print("Pipeline (Folyamat) modellek:", pl_models if pl_models else "(nincs vagy nem elérhető)")
+    except Exception as e:
+        print("Pipeline modellek:", e)
+
     # 1) Pipeline API (10.0.0.175:9099/v1)
     try:
         content = pipeline_chat(
