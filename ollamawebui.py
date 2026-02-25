@@ -147,11 +147,12 @@ def openwebui_list_models(api_key: str | None = None, base_url: str | None = Non
 
 # --- Open WebUI: fájlok (RAG) – feltöltés, listázás, feldolgozás állapot ---
 #
-# Ha "sikeresen feltöltve de nem jelenik meg":
-# 1) A fájl először "pending", később "completed" – a listában is megjelenhet, de feldolgozás alatt.
-# 2) A felületen: Knowledge / Files (vagy oldalsáv Files) – nézd meg, hogy ott látszik-e.
-# 3) Ha egy Knowledge gyűjteményben várod: a feltöltés után külön hozzá kell adni a fájlt
-#    (add_file_to_knowledge), és csak completed állapot után (wait_for_file_processing).
+# Ha "sikeresen feltöltve de nem jelenik meg" / "nincs frissíthető szelep":
+# 1) A felület nem mindig frissül automatikusan – próbáld: F5 (oldal újratöltése), vagy
+#    másik menüre kattintás majd vissza (pl. Knowledge → Files).
+# 2) A fájl listáját Pythonból mindig lekérheted: openwebui_list_files().
+# 3) A fájl először "pending", később "completed" – add a knowledge-hoz csak completed után.
+# 4) Hol jelenik meg: Knowledge / Files (vagy oldalsáv Files).
 
 def _openwebui_headers(api_key: str | None = None, accept_json: bool = True):
     key = api_key if api_key is not None else OPENWEBUI_API_KEY
