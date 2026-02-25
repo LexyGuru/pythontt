@@ -145,6 +145,150 @@ def openwebui_list_models(api_key: str | None = None, base_url: str | None = Non
     return data.get("data", data.get("models", []))
 
 
+# --- Open WebUI: fájlok (RAG) – feltöltés, listázás, feldolgozás állapot ---
+#
+# Ha "sikeresen feltöltve de nem jelenik meg":
+# 1) A fájl először "pending", később "completed" – a listában is megjelenhet, de feldolgozás alatt.
+# 2) A felületen: Knowledge / Files (vagy oldalsáv Files) – nézd meg, hogy ott látszik-e.
+# 3) Ha egy Knowledge gyűjteményben várod: a feltöltés után külön hozzá kell adni a fájlt
+#    (add_file_to_knowledge), és csak completed állapot után (wait_for_file_processing).
+
+def _openwebui_headers(api_key: str | None = None, accept_json: bool = True):
+    key = api_key if api_key is not None else OPENWEBUI_API_KEY
+    h = {"Accept": "application/json"} if accept_json else {}
+    if key:
+        h["Authorization"] = f"Bearer {key}"
+    return h
+
+
+def openwebui_list_files(
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    content: bool = False,
+):
+    """
+    Open WebUI: feltöltött fájlok listája (GET /api/v1/files/).
+    Így ellenőrizheted, hogy a feltöltött fájl tényleg megvan-e (és milyen id/status).
+    """
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    r = requests.get(
+        f"{base}/api/v1/files/",
+        headers=_openwebui_headers(api_key),
+        params={"content": str(content).lower()},
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def openwebui_upload_file(
+    file_path: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    process: bool = True,
+    process_in_background: bool = True,
+):
+    """
+    Open WebUI: fájl feltöltése (POST /api/v1/files/).
+    Visszaadja a választ (id, filename, data.status pl. "pending").
+    """
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    headers = _openwebui_headers(api_key)
+    with open(file_path, "rb") as f:
+        name = os.path.basename(file_path)
+        r = requests.post(
+            f"{base}/api/v1/files/",
+            headers=headers,
+            files={"file": (name, f)},
+            params={"process": process, "process_in_background": process_in_background},
+            timeout=120,
+        )
+    r.raise_for_status()
+    return r.json()
+
+
+def openwebui_file_process_status(
+    file_id: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+):
+    """
+    Open WebUI: fájl feldolgozási állapota (pending / completed / failed).
+    GET /api/v1/files/{id}/process/status
+    """
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    r = requests.get(
+        f"{base}/api/v1/files/{file_id}/process/status",
+        headers=_openwebui_headers(api_key),
+        timeout=10,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def openwebui_wait_for_file_processing(
+    file_id: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    timeout: int = 300,
+    poll_interval: float = 2.0,
+):
+    """
+    Vár, amíg a fájl feldolgozása completed vagy failed lesz.
+    Ha completed: visszaadja a status dict-et. Ha failed: Exception-t dob.
+    """
+    import time
+
+    start = time.monotonic()
+    while (time.monotonic() - start) < timeout:
+        data = openwebui_file_process_status(
+            file_id, api_key=api_key, base_url=base_url
+        )
+        status = data.get("status")
+        if status == "completed":
+            return data
+        if status == "failed":
+            raise RuntimeError(f"Feldolgozás sikertelen: {data.get('error', data)}")
+        time.sleep(poll_interval)
+    raise TimeoutError(f"Feldolgozás {timeout}s alatt nem fejeződött be.")
+
+
+def openwebui_add_file_to_knowledge(
+    knowledge_id: str,
+    file_id: str,
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+):
+    """
+    Feltöltött fájl hozzáadása egy Knowledge gyűjteményhez.
+    Csak completed állapot után használd (pl. openwebui_wait_for_file_processing).
+    """
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    headers = _openwebui_headers(api_key)
+    headers["Content-Type"] = "application/json"
+    r = requests.post(
+        f"{base}/api/v1/knowledge/{knowledge_id}/file/add",
+        headers=headers,
+        json={"file_id": file_id},
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
 # --- 4. Jupyter (URL + API token) ---
 
 def jupyter_session_url(*, base_url: str | None = None, token: str | None = None):
@@ -212,6 +356,17 @@ if __name__ == "__main__":
         print("Open WebUI válasz:", (content or "(üres)")[:200])
     except Exception as e:
         print("Open WebUI:", e)
+
+    # 3b) Open WebUI feltöltött fájlok listája (ha "sikeresen feltöltve de nem jelenik meg")
+    try:
+        files = openwebui_list_files()
+        print("Open WebUI fájlok száma:", len(files) if isinstance(files, list) else "?")
+        for f in (files if isinstance(files, list) else [])[:3]:
+            fid = f.get("id", f.get("filename", "?"))
+            status = (f.get("data") or {}).get("status", "-")
+            print(f"  - id={fid} status={status}")
+    except Exception as e:
+        print("Open WebUI list_files:", e)
 
     # 4) Jupyter URL (böngészőben megnyitás)
     print("Jupyter URL (token-nel):", jupyter_session_url())
