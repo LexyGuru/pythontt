@@ -1,0 +1,225 @@
+"""
+Ollama, Pipeline, Open WebUI, Jupyter, DDGS – egy helyen.
+
+1. Közvetlen Ollama API
+2. Pipeline API (OpenAI-kompatibilis)
+3. Open WebUI API (saját gép: API kulcs nélkül is használható)
+4. Jupyter (notebook szerver / API)
+5. DDGS – DuckDuckGo Search (webes kereső backend)
+
+Alapértelmezett címek:
+  - Pipeline API:  http://10.0.0.175:9099/v1
+  - Ollama API:    http://10.0.0.78:11434
+  - Jupyter:       http://10.0.0.80:8888
+  - Open WebUI:   saját gép, API kulcs opcionális
+"""
+
+import os
+
+# --- Alapértelmezett API címek és kulcsok ---
+PIPELINE_BASE_URL = os.environ.get("PIPELINE_BASE_URL", "http://10.0.0.175:9099/v1")
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://10.0.0.78:11434")
+
+JUPYTER_URL = os.environ.get("JUPYTER_URL", "http://10.0.0.80:8888")
+JUPYTER_API_KEY = os.environ.get("JUPYTER_API_KEY", "b8c2a21af7639880cc03b268edebe681ec832528eda36c0b")
+
+# Open WebUI: saját gépen fut, API kulcs nincs (webes keresőmotor); opcionális
+OPENWEBUI_BASE = os.environ.get("OPENWEBUI_BASE_URL", "http://localhost:3000")
+OPENWEBUI_API_KEY = os.environ.get("OPENWEBUI_API_KEY", "")  # üres = nincs auth
+
+# --- 1. Közvetlen Ollama API ---
+
+def ollama_direct_chat(model: str, prompt: str, host: str | None = None):
+    """Közvetlenül az Ollama API-t hívja (pl. 10.0.0.78:11434)."""
+    from ollama import chat
+
+    response = chat(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        host=host if host is not None else OLLAMA_HOST,
+    )
+    return response.get("message", {}).get("content", "")
+
+
+def ollama_list_models(host: str | None = None):
+    """Ollama: listázza a telepített modelleket."""
+    from ollama import list as ollama_list
+
+    client_kw = {"host": host if host is not None else OLLAMA_HOST}
+    models = ollama_list(**client_kw)
+    return [m.get("name") for m in models.get("models", [])]
+
+
+# --- 2. Pipeline API (pl. 10.0.0.175:9099/v1, gyakran OpenAI-kompatibilis) ---
+
+def pipeline_chat(
+    model: str,
+    messages: list[dict],
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    timeout: int = 60,
+):
+    """
+    Pipeline API chat (pl. POST .../v1/chat/completions).
+    base_url pl. http://10.0.0.175:9099/v1
+    """
+    import requests
+
+    base = (base_url or PIPELINE_BASE_URL).rstrip("/")
+    url = f"{base}/chat/completions"
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    r = requests.post(
+        url,
+        headers=headers,
+        json={"model": model, "messages": messages},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+    data = r.json()
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+
+def pipeline_list_models(base_url: str | None = None, api_key: str | None = None):
+    """Pipeline API: modellek listázása (GET .../v1/models), ha támogatja."""
+    import requests
+
+    base = (base_url or PIPELINE_BASE_URL).rstrip("/")
+    url = f"{base}/models"
+    headers = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    r = requests.get(url, headers=headers or None, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("data", data.get("models", []))
+
+
+# --- 3. Open WebUI API (saját gép, webes kereső – API kulcs nélkül is) ---
+
+def openwebui_chat(
+    model: str,
+    messages: list[dict],
+    *,
+    api_key: str | None = None,
+    base_url: str | None = None,
+):
+    """
+    Open WebUI chat completions (OpenAI-kompatibilis).
+    Saját gépen fut: api_key üres is lehet (nincs auth).
+    """
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    key = api_key if api_key is not None else OPENWEBUI_API_KEY
+    headers = {"Content-Type": "application/json"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    r = requests.post(
+        f"{base}/api/chat/completions",
+        headers=headers,
+        json={"model": model, "messages": messages},
+        timeout=60,
+    )
+    r.raise_for_status()
+    data = r.json()
+    return data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+
+def openwebui_list_models(api_key: str | None = None, base_url: str | None = None):
+    """Open WebUI: listázza az elérhető modelleket (API kulcs opcionális)."""
+    import requests
+
+    base = (base_url or OPENWEBUI_BASE).rstrip("/")
+    key = api_key if api_key is not None else OPENWEBUI_API_KEY
+    headers = {}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+
+    r = requests.get(f"{base}/api/models", headers=headers or None, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("data", data.get("models", []))
+
+
+# --- 4. Jupyter (URL + API token) ---
+
+def jupyter_session_url(*, base_url: str | None = None, token: str | None = None):
+    """Jupyter belépési URL token-nel (pl. böngészőben)."""
+    base = (base_url or JUPYTER_URL).rstrip("/")
+    tok = token or JUPYTER_API_KEY
+    return f"{base}/?token={tok}" if tok else base
+
+
+def jupyter_api_headers(*, base_url: str | None = None, token: str | None = None):
+    """Header dict a Jupyter REST API híváshoz (Authorization: token <token>)."""
+    tok = token or JUPYTER_API_KEY
+    return {"Authorization": f"token {tok}"} if tok else {}
+
+
+# --- 5. DDGS – DuckDuckGo Search (webes kereső backend) ---
+
+def ddgs_search(query: str, max_results: int = 5):
+    """
+    DDGS (DuckDuckGo Search) – webes szöveges keresés.
+    Backend: duckduckgo-search. Visszaadja a találatok listáját.
+    """
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        raise ImportError("pip install duckduckgo-search")
+
+    with DDGS() as ddgs:
+        results = list(ddgs.text(query, max_results=max_results))
+    return [
+        {"title": r.get("title", ""), "body": r.get("body", ""), "href": r.get("href", "")}
+        for r in results
+    ]
+
+
+# --- Példa használat ---
+
+if __name__ == "__main__":
+    # 1) Pipeline API (10.0.0.175:9099/v1)
+    try:
+        content = pipeline_chat(
+            "qwen3",  # vagy a pipeline-on elérhető modell neve
+            [{"role": "user", "content": "Szia! Egy rövid üzenet."}],
+        )
+        print("Pipeline válasz:", (content or "(üres)")[:300])
+    except Exception as e:
+        print("Pipeline API:", e)
+
+    # 2) Közvetlen Ollama (10.0.0.78:11434)
+    try:
+        models = ollama_list_models()
+        print("Ollama modellek:", models[:5] if models else "nincs / nem elérhető")
+        if models:
+            reply = ollama_direct_chat(models[0], "Szia! Egy rövid üzenet.")
+            print("Ollama válasz:", (reply or "(üres)")[:200])
+    except Exception as e:
+        print("Ollama:", e)
+
+    # 3) Open WebUI (saját gép – API kulcs nélkül is)
+    try:
+        content = openwebui_chat(
+            "llama3.1",  # vagy a te modell neved
+            [{"role": "user", "content": "Szia! Egy rövid üzenet."}],
+        )
+        print("Open WebUI válasz:", (content or "(üres)")[:200])
+    except Exception as e:
+        print("Open WebUI:", e)
+
+    # 4) Jupyter URL (böngészőben megnyitás)
+    print("Jupyter URL (token-nel):", jupyter_session_url())
+
+    # 5) DDGS – DuckDuckGo Search
+    try:
+        results = ddgs_search("Python Ollama", max_results=2)
+        for r in results:
+            print("DDGS:", r.get("title", "")[:60], "-", r.get("href", "")[:50])
+    except Exception as e:
+        print("DDGS:", e)
